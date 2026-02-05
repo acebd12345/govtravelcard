@@ -1,0 +1,12 @@
+fastapi
+uvicorn
+google-cloud-storage
+faster-whisper
+python-multipart
+pandas
+googlemaps
+rapidfuzz
+requests
+pyarrow
+python-dotenv
+google-genai
