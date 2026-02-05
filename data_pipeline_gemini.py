@@ -28,7 +28,7 @@ GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
 
 # 檔案名稱設定
 CACHE_BLOB_NAME = "geocoding_cache.parquet"
-TMP_CACHE = "/tmp/cache.parquet"
+TMP_CACHE = f"/tmp/cache_{os.getpid()}.parquet" # 使用 PID 避免多進程衝突
 GEMINI_MODEL_NAME = "gemini-3-pro-preview"
 
 # 設定 Gemini SDK Client

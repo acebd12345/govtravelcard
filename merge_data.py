@@ -116,6 +116,11 @@ def merge_and_upload():
             print(merged_final['district'].value_counts())
             print("")
 
+        # Ensure numeric columns are actually numeric to avoid mixed type errors in PyArrow
+        for col in ['lat', 'lng', 'price_level']:
+            if col in merged_final.columns:
+                merged_final[col] = pd.to_numeric(merged_final[col], errors='coerce')
+
         merged_final.to_parquet(FINAL_BLOB_NAME, index=False)
         print(f"[INFO] Saved merged final data to {FINAL_BLOB_NAME} ({len(merged_final)} records)")
     else:
