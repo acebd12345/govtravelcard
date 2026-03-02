@@ -5,3 +5,6 @@ service_account.json
 outputs/
 *.parquet
 .DS_Store
+gcp-sa-key.json
+.env.gcp
+scheduler_configs/

@@ -1,28 +1,28 @@
-# Use NVIDIA CUDA base image for GPU support
-# Ensure the CUDA version matches what faster-whisper/CTranslate2 expects (usually 11.x or 12.x)
-FROM nvidia/cuda:11.8.0-cudnn8-runtime-ubuntu22.04
+# 使用輕量級 Python 3.10 映像檔
+FROM python:3.10-slim
 
-# Install Python and basic utilities
-RUN apt-get update && apt-get install -y \
-    python3 \
-    python3-pip \
-    git \
-    && rm -rf /var/lib/apt/lists/*
-
-# Set working directory
+# 設定工作目錄
 WORKDIR /app
 
-# Copy requirements and install
+# 安裝系統依賴 (例如: curl 用於健康檢查)
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
+
+# 複製 requirements.txt 並安裝 Python 依賴
+# 這裡使用 requirements.txt (包含 FastAPI, uvicorn 等) 而不是 cloudfunctions_requirements.txt
 COPY requirements.txt .
-RUN pip3 install --no-cache-dir -r requirements.txt
+RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy application code
-COPY transcribe_app.py .
+# 複製專案程式碼
+COPY . .
 
-# Set environment variables
+# 設定環境變數 (避免生成 .pyc 檔案，並讓 stdout/stderr 立即輸出)
+ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONUNBUFFERED=1
-ENV PORT=8080
 
-# Run the application
-# host 0.0.0.0 is required for Cloud Run / Docker networking
-CMD ["uvicorn", "transcribe_app:app", "--host", "0.0.0.0", "--port", "8080"]
+# 開放連接埠 (Cloud Run 預設使用 8080)
+EXPOSE 8080
+
+# 啟動命令：使用 uvicorn 執行 FastAPI 應用 (main:app)
+CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8080"]

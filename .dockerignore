@@ -1,0 +1,12 @@
+.env
+.env.gcp
+service_account.json
+gcp-sa-key.json
+.git
+__pycache__
+*.parquet
+outputs/
+.DS_Store
+*.md
+deploy_to_gcp.sh
+START_HERE.txt

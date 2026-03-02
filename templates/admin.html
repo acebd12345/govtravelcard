@@ -1,0 +1,316 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>GovTravel 排程管理</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <style>
+        body { padding-top: 20px; background-color: #f8f9fa; }
+        .card { margin-bottom: 20px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
+        .badge-mode-dispatch { background-color: #0d6efd; }
+        .badge-mode-merge { background-color: #198754; }
+        .badge-mode-scrape { background-color: #6c757d; }
+        .loading { display: none; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header class="d-flex justify-content-between align-items-center mb-4">
+            <h1 class="h3">📅 GovTravel 排程管理中心</h1>
+            <span class="text-muted">Project: {{ project_id }}</span>
+        </header>
+
+        <!-- 建立新排程 -->
+        <div class="card">
+            <div class="card-header bg-white">
+                <h5 class="mb-0">➕ 建立新排程</h5>
+            </div>
+            <div class="card-body">
+                <form id="createJobForm">
+                    <div class="row g-3">
+                        <div class="col-md-4">
+                            <label class="form-label">排程名稱 (ID)</label>
+                            <input type="text" class="form-control" id="jobName" placeholder="例如: taipei-daily" required>
+                        </div>
+                        <div class="col-md-4">
+                            <label class="form-label">Cron 表達式 (預設每日凌晨2點)</label>
+                            <input type="text" class="form-control" id="jobSchedule" value="0 2 * * *" required>
+                        </div>
+                        <div class="col-md-4">
+                            <label class="form-label">任務模式</label>
+                            <select class="form-select" id="jobMode">
+                                <option value="dispatch" selected>自動派工 (Dispatch)</option>
+                                <option value="merge">資料合併 (Merge)</option>
+                            </select>
+                        </div>
+                        
+                        <!-- Config Area (Dispatch Mode Only) -->
+                        <div class="col-12" id="configArea">
+                            <div class="card bg-light border-0">
+                                <div class="card-body">
+                                    <h6 class="card-title">參數設定</h6>
+                                    <div class="row g-2">
+                                        <div class="col-md-3">
+                                            <label class="form-label">城市</label>
+                                            <select class="form-select" id="configCity">
+                                                {% for code, name in cities.items() %}
+                                                <option value="{{ code }}">{{ name }} ({{ code }})</option>
+                                                {% endfor %}
+                                            </select>
+                                        </div>
+                                        <div class="col-md-9">
+                                            <label class="form-label">行業 (可多選)</label>
+                                            <div class="d-flex flex-wrap gap-2">
+                                                {% for code, name in industries.items() %}
+                                                <div class="form-check">
+                                                    <input class="form-check-input industry-check" type="checkbox" value="{{ code }}" id="ind_{{ code }}" checked>
+                                                    <label class="form-check-label" for="ind_{{ code }}">{{ name }}</label>
+                                                </div>
+                                                {% endfor %}
+                                            </div>
+                                        </div>
+                                    </div>
+                                    <div class="mt-3">
+                                        <label class="form-label">指定行政區 (選填，若不選則自動跑全區)</label>
+                                        <div class="d-flex flex-wrap gap-2">
+                                            {% for code, name in districts.items() %}
+                                            <div class="form-check">
+                                                <input class="form-check-input district-check" type="checkbox" value="{{ code }}" id="dist_{{ code }}">
+                                                <label class="form-check-label" for="dist_{{ code }}">{{ name }}</label>
+                                            </div>
+                                            {% endfor %}
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="col-12 text-end">
+                            <button type="submit" class="btn btn-primary">建立排程</button>
+                        </div>
+                    </div>
+                </form>
+            </div>
+        </div>
+
+        <!-- 排程列表 -->
+        <div class="card">
+            <div class="card-header bg-white d-flex justify-content-between align-items-center">
+                <h5 class="mb-0">📋 現有排程列表</h5>
+                <button class="btn btn-sm btn-outline-secondary" onclick="loadJobs()">重新整理</button>
+            </div>
+            <div class="card-body p-0">
+                <div class="table-responsive">
+                    <table class="table table-hover mb-0 align-middle">
+                        <thead class="table-light">
+                            <tr>
+                                <th>名稱</th>
+                                <th>排程時間</th>
+                                <th>模式</th>
+                                <th>設定摘要</th>
+                                <th>狀態</th>
+                                <th>操作</th>
+                            </tr>
+                        </thead>
+                        <tbody id="jobsTableBody">
+                            <!-- JS will populate this -->
+                        </tbody>
+                    </table>
+                </div>
+                <div id="loading" class="text-center p-4 loading">
+                    <div class="spinner-border text-primary" role="status"></div>
+                    <p class="mt-2 text-muted">載入中...</p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+    <script>
+        // 切換模式時顯示/隱藏 Config
+        document.getElementById('jobMode').addEventListener('change', function() {
+            const configArea = document.getElementById('configArea');
+            if (this.value === 'merge') {
+                configArea.style.display = 'none';
+            } else {
+                configArea.style.display = 'block';
+            }
+        });
+
+        // 載入排程列表
+        async function loadJobs() {
+            const tbody = document.getElementById('jobsTableBody');
+            const loading = document.getElementById('loading');
+            
+            tbody.innerHTML = '';
+            loading.style.display = 'block';
+
+            try {
+                const res = await fetch('/api/jobs');
+                const data = await res.json();
+                
+                loading.style.display = 'none';
+                
+                if (data.error) {
+                    const errRow = document.createElement('tr');
+                    const errCell = document.createElement('td');
+                    errCell.colSpan = 6;
+                    errCell.className = 'text-danger text-center';
+                    errCell.textContent = '載入失敗: ' + data.error;
+                    errRow.appendChild(errCell);
+                    tbody.appendChild(errRow);
+                    return;
+                }
+
+                if (data.jobs.length === 0) {
+                    const emptyRow = document.createElement('tr');
+                    const emptyCell = document.createElement('td');
+                    emptyCell.colSpan = 6;
+                    emptyCell.className = 'text-center text-muted';
+                    emptyCell.textContent = '目前沒有任何排程';
+                    emptyRow.appendChild(emptyCell);
+                    tbody.appendChild(emptyRow);
+                    return;
+                }
+
+                data.jobs.forEach(job => {
+                    let configSummary = '-';
+                    if (job.mode === 'dispatch' && job.config) {
+                        const inds = (job.config.industries || []).length;
+                        const dists = job.config.districts ? job.config.districts.length + ' 區' : '全區';
+                        configSummary = (job.config.city || '未知') + ' | ' + dists + ' | ' + inds + ' 行業';
+                    }
+
+                    const allowedModes = ['dispatch', 'merge', 'scrape'];
+                    const badgeClass = allowedModes.includes(job.mode) ? 'badge-mode-' + job.mode : 'badge-mode-scrape';
+
+                    const row = document.createElement('tr');
+
+                    const nameCell = document.createElement('td');
+                    nameCell.className = 'fw-bold';
+                    nameCell.textContent = job.name;
+                    row.appendChild(nameCell);
+
+                    const schedCell = document.createElement('td');
+                    const codeEl = document.createElement('code');
+                    codeEl.textContent = job.schedule;
+                    schedCell.appendChild(codeEl);
+                    row.appendChild(schedCell);
+
+                    const modeCell = document.createElement('td');
+                    const badge = document.createElement('span');
+                    badge.className = 'badge ' + badgeClass;
+                    badge.textContent = job.mode;
+                    modeCell.appendChild(badge);
+                    row.appendChild(modeCell);
+
+                    const configCell = document.createElement('td');
+                    const small = document.createElement('small');
+                    small.textContent = configSummary;
+                    configCell.appendChild(small);
+                    row.appendChild(configCell);
+
+                    const stateCell = document.createElement('td');
+                    stateCell.textContent = job.state.includes('ENABLED') ? '🟢 啟用' : '🔴 停用';
+                    row.appendChild(stateCell);
+
+                    const actionCell = document.createElement('td');
+                    const delBtn = document.createElement('button');
+                    delBtn.className = 'btn btn-sm btn-outline-danger';
+                    delBtn.textContent = '刪除';
+                    delBtn.addEventListener('click', function() { deleteJob(job.name); });
+                    actionCell.appendChild(delBtn);
+                    row.appendChild(actionCell);
+
+                    tbody.appendChild(row);
+                });
+
+            } catch (e) {
+                loading.style.display = 'none';
+                const errRow = document.createElement('tr');
+                const errCell = document.createElement('td');
+                errCell.colSpan = 6;
+                errCell.className = 'text-danger text-center';
+                errCell.textContent = '系統錯誤: ' + e.message;
+                errRow.appendChild(errCell);
+                tbody.appendChild(errRow);
+            }
+        }
+
+        // 建立排程
+        document.getElementById('createJobForm').addEventListener('submit', async function(e) {
+            e.preventDefault();
+            const btn = this.querySelector('button[type="submit"]');
+            btn.disabled = true;
+            btn.textContent = '建立中...';
+
+            const mode = document.getElementById('jobMode').value;
+            let config = {};
+
+            if (mode === 'dispatch') {
+                const city = document.getElementById('configCity').value;
+                const industries = Array.from(document.querySelectorAll('.industry-check:checked')).map(cb => cb.value);
+                const districts = Array.from(document.querySelectorAll('.district-check:checked')).map(cb => cb.value);
+                
+                config = {
+                    city: city,
+                    industries: industries,
+                    districts: districts.length > 0 ? districts : null
+                };
+            }
+
+            const payload = {
+                name: document.getElementById('jobName').value,
+                schedule: document.getElementById('jobSchedule').value,
+                mode: mode,
+                config: config,
+                description: `Created via Admin Dashboard (${mode})`
+            };
+
+            try {
+                const res = await fetch('/api/jobs', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify(payload)
+                });
+                const result = await res.json();
+                
+                if (result.error) {
+                    alert('建立失敗: ' + result.error);
+                } else {
+                    alert('建立成功！');
+                    this.reset();
+                    loadJobs();
+                }
+            } catch (e) {
+                alert('系統錯誤: ' + e.message);
+            } finally {
+                btn.disabled = false;
+                btn.textContent = '建立排程';
+            }
+        });
+
+        // 刪除排程
+        async function deleteJob(jobId) {
+            if (!confirm(`確定要刪除排程 ${jobId} 嗎？此動作無法復原。`)) return;
+
+            try {
+                const res = await fetch(`/api/jobs/${jobId}`, { method: 'DELETE' });
+                const result = await res.json();
+                
+                if (result.error) {
+                    alert('刪除失敗: ' + result.error);
+                } else {
+                    loadJobs();
+                }
+            } catch (e) {
+                alert('系統錯誤: ' + e.message);
+            }
+        }
+
+        // 初始載入
+        loadJobs();
+    </script>
+</body>
+</html>

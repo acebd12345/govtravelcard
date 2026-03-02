@@ -5,7 +5,7 @@ import glob
 import pandas as pd
 import gspread
 from dotenv import load_dotenv
-from oauth2client.service_account import ServiceAccountCredentials
+from google.oauth2.service_account import Credentials
 from google.cloud import storage
 
 # 載入 .env 檔案中的環境變數
@@ -19,8 +19,8 @@ KEY_FILE = "service_account.json"
 if os.path.exists(KEY_FILE):
     os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = os.path.abspath(KEY_FILE)
 
-# 請填入您的 Google Sheet 網址或是 ID
-SHEET_URL = os.getenv("SHEET_URL", "https://docs.google.com/spreadsheets/d/1Qx1uv17r7GxQWc6KYTWflqdfDk7HoR0hs1Nk3toB97M/edit?gid=0#gid=0") 
+# Set SHEET_URL via environment variable; the default below is a development fallback
+SHEET_URL = os.getenv("SHEET_URL", "https://docs.google.com/spreadsheets/d/1Qx1uv17r7GxQWc6KYTWflqdfDk7HoR0hs1Nk3toB97M/edit?gid=0#gid=0")
 
 BUCKET_NAME = os.getenv("BUCKET_NAME")
 
@@ -49,9 +49,9 @@ def get_gspread_client():
     if not os.path.exists(KEY_FILE):
         print(f"[ERROR] 找不到 {KEY_FILE}。請確認您已將金鑰檔案放在目錄下。")
         return None
-    
-    scope = ['https://spreadsheets.google.com/feeds', 'https://www.googleapis.com/auth/drive']
-    creds = ServiceAccountCredentials.from_json_keyfile_name(KEY_FILE, scope)
+
+    scopes = ['https://spreadsheets.google.com/feeds', 'https://www.googleapis.com/auth/drive']
+    creds = Credentials.from_service_account_file(KEY_FILE, scopes=scopes)
     client = gspread.authorize(creds)
     return client
 

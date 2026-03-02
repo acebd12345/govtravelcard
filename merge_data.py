@@ -18,13 +18,43 @@ if os.path.exists(KEY_FILE):
     os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = os.path.abspath(KEY_FILE)
     print(f"[INFO] Set GOOGLE_APPLICATION_CREDENTIALS to {KEY_FILE}")
 
-def merge_and_upload():
-    if not os.path.exists(OUTPUT_DIR):
-        print(f"Error: {OUTPUT_DIR} does not exist.")
-        return
+def merge_and_upload(output_dir=None):
+    if output_dir is None:
+        output_dir = OUTPUT_DIR
+        
+    if not os.path.exists(output_dir):
+        # 若目錄不存在，嘗試建立它（對 Cloud Functions 來說很重要）
+        try:
+            os.makedirs(output_dir)
+        except OSError:
+            print(f"Error: {output_dir} does not exist and cannot be created.")
+            return {"status": "failed", "error": f"{output_dir} does not exist"}
+
+    # [NEW] 從 GCS 下載所有 Fragments 到本地 output_dir
+    if BUCKET_NAME:
+        print(f"[INFO] Downloading fragments from gs://{BUCKET_NAME}/fragments/ ...")
+        try:
+            client = storage.Client()
+            bucket = client.bucket(BUCKET_NAME)
+            blobs = list(bucket.list_blobs(prefix="fragments/"))
+            
+            downloaded_count = 0
+            for blob in blobs:
+                if blob.name.endswith(".parquet"):
+                    # 下載到 output_dir/final_xxx.parquet
+                    # 注意：blob.name 包含 'fragments/' 前綴，需要去掉或保留
+                    filename = os.path.basename(blob.name)
+                    local_path = os.path.join(output_dir, filename)
+                    blob.download_to_filename(local_path)
+                    downloaded_count += 1
+            
+            print(f"[INFO] Downloaded {downloaded_count} fragments.")
+        except Exception as e:
+            print(f"[ERROR] Failed to download fragments: {e}")
+            return {"status": "failed", "error": str(e)}
 
     # 1. Merge Raw Data
-    raw_files = glob.glob(os.path.join(OUTPUT_DIR, "raw_*.parquet"))
+    raw_files = glob.glob(os.path.join(output_dir, "raw_*.parquet"))
     if raw_files:
         print(f"[INFO] Found {len(raw_files)} raw data files.")
         raw_dfs = []
@@ -49,13 +79,15 @@ def merge_and_upload():
         if raw_dfs:
             merged_raw = pd.concat(raw_dfs, ignore_index=True)
             print(f"[INFO] Merged raw data shape: {merged_raw.shape}")
-            merged_raw.to_parquet(RAW_BLOB_NAME, index=False)
-            print(f"[INFO] Saved merged raw data to {RAW_BLOB_NAME}")
+            raw_output_path = os.path.join(output_dir, RAW_BLOB_NAME)
+            merged_raw.to_parquet(raw_output_path, index=False)
+            print(f"[INFO] Saved merged raw data to {raw_output_path}")
     else:
         print("[WARN] No raw data files found.")
 
     # 2. Merge Final Data
-    final_files = glob.glob(os.path.join(OUTPUT_DIR, "final_*.parquet"))
+    # 這裡會讀取剛剛從 GCS 下載下來的所有 fragments
+    final_files = glob.glob(os.path.join(output_dir, "final_*.parquet"))
     if final_files:
         print(f"[INFO] Found {len(final_files)} final data files.")
         final_dfs = []
@@ -87,7 +119,7 @@ def merge_and_upload():
 
         if not final_dfs:
             print("[WARN] No valid final data loaded.")
-            return
+            return {"status": "skipped", "message": "No valid final data loaded"}
 
         merged_final = pd.concat(final_dfs, ignore_index=True)
         print(f"[INFO] Merged raw count (before dedup): {len(merged_final)}")
@@ -117,12 +149,13 @@ def merge_and_upload():
             print("")
 
         # Ensure numeric columns are actually numeric to avoid mixed type errors in PyArrow
-        for col in ['lat', 'lng', 'price_level']:
+        for col in ['lat', 'lng']:
             if col in merged_final.columns:
                 merged_final[col] = pd.to_numeric(merged_final[col], errors='coerce')
 
-        merged_final.to_parquet(FINAL_BLOB_NAME, index=False)
-        print(f"[INFO] Saved merged final data to {FINAL_BLOB_NAME} ({len(merged_final)} records)")
+        final_output_path = os.path.join(output_dir, FINAL_BLOB_NAME)
+        merged_final.to_parquet(final_output_path, index=False)
+        print(f"[INFO] Saved merged final data to {final_output_path} ({len(merged_final)} records)")
     else:
         print("[WARN] No final data files found.")
 
@@ -132,20 +165,26 @@ def merge_and_upload():
             client = storage.Client()
             bucket = client.bucket(BUCKET_NAME)
 
-            if os.path.exists(FINAL_BLOB_NAME):
+            final_output_path = os.path.join(output_dir, FINAL_BLOB_NAME)
+            if os.path.exists(final_output_path):
                 blob = bucket.blob(FINAL_BLOB_NAME)
-                blob.upload_from_filename(FINAL_BLOB_NAME)
+                blob.upload_from_filename(final_output_path)
                 print(f"[INFO] Uploaded to gs://{BUCKET_NAME}/{FINAL_BLOB_NAME}")
             
-            if os.path.exists(RAW_BLOB_NAME):
+            raw_output_path = os.path.join(output_dir, RAW_BLOB_NAME)
+            if os.path.exists(raw_output_path):
                 blob = bucket.blob(RAW_BLOB_NAME)
-                blob.upload_from_filename(RAW_BLOB_NAME)
+                blob.upload_from_filename(raw_output_path)
                 print(f"[INFO] Uploaded to gs://{BUCKET_NAME}/{RAW_BLOB_NAME}")
                 
         except Exception as e:
             print(f"[ERROR] Upload failed: {e}")
+            return {"status": "failed", "error": str(e)}
     else:
         print("[WARN] BUCKET_NAME not set, skipping upload.")
+        return {"status": "skipped", "message": "Bucket name not set"}
+
+    return {"status": "success", "message": "Merge and upload completed"}
 
 if __name__ == "__main__":
     merge_and_upload()
