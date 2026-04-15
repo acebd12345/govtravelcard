@@ -737,6 +737,18 @@ def run_pipeline_for_config(config):
                         if atomic_write_parquet(final_file_path, final_df):
                             logger.info(f"[SUCCESS] {city_name} - {zip_name} - {ind_name}: {len(final_df)} records")
                             success_count += 1
+
+                            # 上傳 Fragment 到 GCS
+                            if BUCKET_NAME:
+                                try:
+                                    blob_name = f"{FRAGMENTS_DIR}/final_{file_suffix}.parquet"
+                                    client_storage = storage.Client()
+                                    bucket = client_storage.bucket(BUCKET_NAME)
+                                    blob = bucket.blob(blob_name)
+                                    blob.upload_from_filename(final_file_path)
+                                    logger.info(f"[UPLOAD] Fragment uploaded to gs://{BUCKET_NAME}/{blob_name}")
+                                except Exception as e:
+                                    logger.error(f"[ERROR] Failed to upload fragment: {e}")
                     else:
                         logger.warning("[WARN] No results from Gemini.")
                         success_count += 1
